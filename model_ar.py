@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from statsmodels.tsa.stattools import adfuller
+from statsmodels.stats.diagnostic import acorr_ljungbox
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 from statsmodels.tsa.arima_model import ARMA
 from statsmodels.stats.stattools import jarque_bera
@@ -33,7 +34,7 @@ x = data['Adj Close'].diff().dropna()
 sns.tsplot(data=x)
 plot_acf(x, lags=20, alpha=0.05)
 plot_pacf(x, lags=20, alpha=0.05)
-plt.show()
+# plt.show()
 
 #%%
 N=10
@@ -50,11 +51,21 @@ print(ar_model.summary())
 
 #%%
 # CHECK IF RESIDUAL IS WHITE NOISE
-score, p_value, _,_ = jarque_bera(ar_model.resid)
+residuals = ar_model.resid
+score, p_value, _,_ = jarque_bera(residuals)
+lbvalue, pvalue, bpvalue, bppvalue = acorr_ljungbox(residuals, lags=[model_p], boxpierce=True)
+
 if p_value< 0.05:
     print("We have reason to suspect that the residuals are not normally distributed")
 else:
     print("The residuals seem normally distributed")
+
+if pvalue < 0.05:
+    print("We have reason to suspect that the residuals are autocorrelated")
+else:
+    print("The residuals seem like white noise")
+
+
 
 
 

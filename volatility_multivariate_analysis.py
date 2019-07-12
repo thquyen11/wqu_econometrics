@@ -12,3 +12,12 @@ import plotly
 from plotly.plotly import plot_mpl
 
 
+
+plotly.tools.set_credentials_file(username='thquyen11', api_key='DEU7LZZR5QP9QfznXjRO')
+appl_daily_stockprice = 'AAPL.csv'
+
+appl_df = pd.read_csv(appl_daily_stockprice, header=0, parse_dates=True, index_col='Date')
+aapl_return_df = appl_df['Adj Close'].diff()
+
+aapl_return_df.plot()
+plt.show()
