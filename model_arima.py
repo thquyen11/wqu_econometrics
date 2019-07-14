@@ -35,7 +35,7 @@ x = data['Adj Close'].diff().dropna()
 sns.tsplot(data=x)
 plot_acf(x, lags=20, alpha=0.05)
 plot_pacf(x, lags=20, alpha=0.05)
-plt.show()
+# plt.show()
 
 #%%
 N=5
@@ -55,7 +55,7 @@ for d in [0,1]:
             except: continue
 
 arima_model=ARIMA(x, order=(best_order[0], best_order[1], best_order[2])).fit()
-print(f'AIC {aic}, best order: {best_order[0]}, {best_order[1]}, {best_order[2]}')
+print(f'AIC {best_AIC}, best order: {best_order[0]}, {best_order[1]}, {best_order[2]}')
 # print(arima_model.summary())
 
 #%%
