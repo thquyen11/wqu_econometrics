@@ -6,7 +6,6 @@ from statsmodels.tsa.stattools import acf
 from statsmodels.graphics.tsaplots import plot_acf
 from statsmodels.graphics.tsaplots import plot_pacf
 from statsmodels.tsa.arima_model import ARIMA
-# from pyramid.arima import auto_arima
 from pyramid.arima import auto_arima
 import matplotlib.pyplot as plt
 import plotly
