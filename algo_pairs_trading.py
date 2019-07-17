@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import seaborn
 
 
-def find_cointegrated_pairs(data, columns):
+def find_cointegrated_pairs(data, columns, plot=False):
     n = data.shape[1]
     score_matrix = np.zeros((n, n))
     pvalue_matrix = np.ones((n, n))
@@ -32,6 +32,16 @@ def find_cointegrated_pairs(data, columns):
             if res_coint[1] < alpha and res_coint[1] < pvalue_min:
                 pvalue_min = res_coint[1]
                 pairs = [columns[i], columns[j]]
+
+    if plot is True:
+        # Illustrate the co-integrated pairs
+        seaborn.heatmap(pvalues, xticklabels=keys,
+                        yticklabels=keys, cmap='RdYlGn_r',
+                        mask=(pvalues >= 0.98))
+        plt.show()
+        plt.plot(panel_data[pairs[0]], color='red')
+        plt.plot(panel_data[pairs[1]], color='green')
+        plt.show()
 
     return score_matrix, pvalue_matrix, pairs
 
@@ -111,6 +121,36 @@ def get_garch_model(residuals):
     return best_aic, best_order, best_model
 
 
+def predict_future_trend(data, plot=False):
+    windowLength = 50
+    foreLength = len(data) - windowLength
+    signal = 0*data[-foreLength:]
+    forecast = pd.DataFrame(index=signal.index, columns=['Forecast'])
+    forecast_output = []
+
+    for d in range(foreLength):
+        TS = data[d:(windowLength+d)]
+        out = forecast_nextday(TS)
+        forecast_output.append(out)
+        signal.iloc[d] = np.sign(out)
+
+    if plot is True:
+        returns = pd.DataFrame(index=signal.index, columns=[
+                               'Buy and Hold', 'Strategy'])
+        returns['Buy and Hold'] = return_S1[-foreLength:]
+        returns['Strategy'] = signal*returns['Buy and Hold']
+        eqCurves = pd.DataFrame(index=signal.index, columns=[
+                                'Buy and Hold', 'Strategy'])
+        eqCurves['Buy and Hold'] = returns['Buy and Hold'].cumsum()+1
+        eqCurves['Strategy'] = returns['Strategy'].cumsum()+1
+        eqCurves['Strategy'].plot(figsize=(10, 8))
+        eqCurves['Buy and Hold'].plot()
+        plt.legend()
+        plt.show()
+
+    return forecast
+
+
 def forecast_nextday(timeseries):
     res_setup = get_arima_model(timeseries)
     aic_arima = res_setup[0]
@@ -123,7 +163,6 @@ def forecast_nextday(timeseries):
         order_garch = res_garch[1]
         mdl_garch = res_garch[2]
         # print(mdl_garch.summary())
-        # _check_heteroskedastic_behavior(mdl_garch.resid)
         out = mdl_garch.forecast(horizon=1, start=None, align='origin')
         return out.mean['h.1'].iloc[-1]
 
@@ -131,15 +170,29 @@ def forecast_nextday(timeseries):
         return mdl_arima.forecast()[0]
 
 
+def initiate_trading_signal(series_1, series_2):
+    spread = return_S1 - return_S2
+    mean = spread.mean()
+    upper_threshold = mean + 2*spread.std()
+    lower_threshold = mean - 2*spread.std()
+    buy_signal = spread.copy()
+    sell_signal = spread.copy()
+
+    buy_signal[spread > upper_threshold] = 0
+    sell_signal[spread < lower_threshold] = 0
+
+    return buy_signal, sell_signal
+
+
 if __name__ == '__main__':
-    start_date = '2018-05-01'
+    start_date = '2018-03-01'
+    # start_date = '2018-01-01'
     end_date = '2018-08-31'
     tickers = ['BTC-USD', 'ETH-USD', 'EOS-USD', 'LTC-USD', 'XMR-USD',
                'NEO-USD', 'ZEC-USD', 'BNB-USD', 'TRX-USD']
 
     panel_data = data.DataReader(
         tickers, 'yahoo', start_date, end_date)['Adj Close']
-    print(panel_data.head())
     keys = panel_data.keys()
 
     # Find the best co-integrated pairs
@@ -147,54 +200,30 @@ if __name__ == '__main__':
         panel_data, keys)
     print(f'The best cointegrated pairs is: {pairs}')
 
-    # Illustrate the co-integrated pairs
-    # panel_data_standardized = pd.DataFrame()
-    # for crypto in panel_data.keys():
-    #     panel_data_standardized[crypto] = normalize_data(panel_data[crypto])
-
-    # seaborn.heatmap(pvalues, xticklabels=keys,
-    #                 yticklabels=keys, cmap='RdYlGn_r',
-    #                 mask=(pvalues >= 0.98))
-    # plt.show()
-
-    # plt.plot(panel_data[pairs[0]], color='red')
-    # plt.plot(panel_data[pairs[1]], color='green')
-    # plt.show()
-
     # TRADING STRATEGY: flag TRADE if spread > 2 sigma
     return_S1 = np.log(panel_data[pairs[0]]/panel_data[pairs[0]].shift(1)
                        ).replace([np.inf, -np.inf], np.nan).dropna()
     return_S2 = np.log(panel_data[pairs[1]]/panel_data[pairs[1]].shift(1)
                        ).replace([np.inf, -np.inf], np.nan).dropna()
-    spread = return_S1 - return_S2
 
-    # Forecast log return at day t+1 by moving window
-    windowLength = 100
-    foreLength = len(return_S1) - windowLength
-    signal = 0*return_S1[-foreLength:]
-    forecast = pd.DataFrame(index=signal.index, columns=['Forecast Value'])
-    forecast_output = []
+    buy_signal, sell_signal = initiate_trading_signal(return_S1, return_S2)
 
-    for d in range(foreLength):
-        TS = return_S1[d:(windowLength+d)]
-        forecast_output.append(forecast_nextday(TS))
-        # signal.iloc[d] = np.sign(out.mean['h.1'].iloc[-1])
-    
-    forecast['Forecast Value'] = forecast_output
-    plt.plot(return_S1, color='blue')
-    plt.plot(forecast, color='red')
+
+    # Graph: buy sell signals
+    S1 = panel_data[pairs[0]][1:]
+    S2 = panel_data[pairs[1]][1:]
+    buyR = 0*S1
+    sellR = 0*S1
+    # When buying the ratio, buy S1 and sell S2
+    buyR[buy_signal != 0] = S1[buy_signal != 0]
+    sellR[buy_signal != 0] = S2[buy_signal != 0]
+    # When selling the ratio, sell S1 and buy S2
+    buyR[sell_signal != 0] = S2[sell_signal != 0]
+    sellR[sell_signal != 0] = S1[sell_signal != 0]
+
+    S1.plot(color='b')
+    S2.plot(color='c')
+    buyR.plot(color='g', linestyle='None', marker='^')
+    sellR.plot(color='r', linestyle='None', marker='^')
+    plt.legend(['Series 1', 'Series 2', 'Buy Signal', 'Sell Signal'])
     plt.show()
-
-
-    # returns = pd.DataFrame(index=signal.index,
-    #                        columns=['Buy and Hold', 'Strategy'])
-    # returns['Buy and Hold'] = return_S1[-foreLength:]
-    # returns['Strategy'] = signal[pairs[0]]*returns['Buy and Hold']
-    # eqCurves = pd.DataFrame(index=signal.index,
-    #                         columns=['Buy and Hold', 'Strategy'])
-    # eqCurves['Buy and Hold'] = returns['Buy and Hold'].cumsum()+1
-    # eqCurves['Strategy'] = returns['Strategy'].cumsum()+1
-    # eqCurves['Strategy'].plot(figsize=(10, 8))
-    # eqCurves['Buy and Hold'].plot()
-    # plt.legend()
-    # plt.show()
