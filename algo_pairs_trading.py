@@ -46,13 +46,6 @@ def find_cointegrated_pairs(data, columns, plot=False):
     return score_matrix, pvalue_matrix, pairs
 
 
-def normalize_data(data):
-    mean = np.mean(data)
-    sigma = np.std(data)
-    data = (data - mean)/sigma
-    return data
-
-
 def get_arima_model(timeseries):
     best_aic = np.inf
     best_order = None
@@ -125,11 +118,12 @@ def predict_future_trend(data, plot=False):
     windowLength = 50
     foreLength = len(data) - windowLength
     signal = 0*data[-foreLength:]
-    forecast = pd.DataFrame(index=signal.index, columns=['Forecast'])
     forecast_output = []
+    forecast = pd.DataFrame(index=signal.index, columns=['Forecast'])
 
     for d in range(foreLength):
-        TS = data[d:(windowLength+d)]
+        TS = data[(1+d):(windowLength+d)]
+        # TS = data[d:(windowLength+d)]
         out = forecast_nextday(TS)
         forecast_output.append(out)
         signal.iloc[d] = np.sign(out)
@@ -148,6 +142,7 @@ def predict_future_trend(data, plot=False):
         plt.legend()
         plt.show()
 
+    forecast['Forecast'] = forecast_output
     return forecast
 
 
@@ -170,23 +165,94 @@ def forecast_nextday(timeseries):
         return mdl_arima.forecast()[0]
 
 
-def initiate_trading_signal(series_1, series_2):
-    spread = return_S1 - return_S2
+def initiate_trading_signal(spread, series_1, series_2, plot=False):
     mean = spread.mean()
-    upper_threshold = mean + 2*spread.std()
-    lower_threshold = mean - 2*spread.std()
+    upper_threshold = mean + spread.std()
+    lower_threshold = mean - spread.std()
     buy_signal = spread.copy()
     sell_signal = spread.copy()
+    close_signal = spread.copy()
+    buy_signal[spread > lower_threshold] = 0
+    sell_signal[spread < upper_threshold] = 0
+    close_signal[spread <= mean - (upper_threshold - lower_threshold)/4] = 0
+    close_signal[spread >= mean + (upper_threshold - lower_threshold)/4] = 0
 
-    buy_signal[spread > upper_threshold] = 0
-    sell_signal[spread < lower_threshold] = 0
+    trading_signal = 0*spread.copy()
+    trading_signal[buy_signal != 0] = 1
+    trading_signal[sell_signal != 0] = -1
+    trading_signal[close_signal != 0] = 0.5
 
-    return buy_signal, sell_signal
+    # Graph of return spread
+    if plot is True:
+        plt.figure(figsize=(15, 7))
+        plt.plot(spread)
+        plt.axhline(0, color='black')
+        plt.axhline(upper_threshold, color='red', linestyle='--')
+        plt.axhline(lower_threshold, color='green', linestyle='--')
+        plt.legend(['Rolling Ratio of Return Spread', 'Mean',
+                    'upper_threshold', 'lower_threshold'])
+        plt.show()
+
+    if plot is True:
+        buyR = 0*series_1.copy()
+        sellR = 0*series_1.copy()
+        # When buying the ratio, buy series_1 and sell series_2
+        buyR[buy_signal != 0] = series_1[buy_signal != 0]
+        sellR[buy_signal != 0] = series_2[buy_signal != 0]
+        # When selling the ratio, sell series_1 and buy series_2
+        buyR[sell_signal != 0] = series_2[sell_signal != 0]
+        sellR[sell_signal != 0] = series_1[sell_signal != 0]
+
+        series_1.plot(color='b')
+        series_2.plot(color='c')
+        buyR.plot(color='g', linestyle='None', marker='^')
+        sellR.plot(color='r', linestyle='None', marker='^')
+        x1, x2, y1, y2 = plt.axis()
+        plt.axis((x1, x2, min(series_1.min(), series_2.min()),
+                  max(series_1.max(), series_2.max())))
+        plt.legend(['Series 1', 'Series 2', 'Buy Signal', 'Sell Signal'])
+        plt.show()
+
+    return trading_signal
 
 
+def get_log_return(data):
+    return np.log(data/data.shift(1)
+                  ).replace([np.inf, -np.inf], np.nan).dropna()
+
+
+def compare_PnL(series1, series2, trading_signal):
+    ratios = series1/series2
+    money = 0
+    countseries1 = 0
+    countseries2 = 0
+    for i in range(len(ratios)):
+        # Buy long, buy Y and sell ratios*X
+        if trading_signal[i] == 1:
+            money += -series1[i] + ratios[i]*series2[i]
+            countseries1 += 1
+            countseries2 -= ratios[i]
+        # Sell short, sell Y and buy ratios*X
+        elif trading_signal[i] == -1:
+            money += series1[i] - ratios[i]*series2[i]
+            countseries1 -= 1
+            countseries2 += ratios[i]
+        # Clear position
+        elif trading_signal[i] == 0.5:
+            money += series1[i]*countseries1 + series2[i]*countseries2
+            countseries1 = 0
+            countseries2 = 0
+    print(f'Strategy PnL {money}')
+
+    # Buy and Hold PnL
+    money_BnH = -(series1[0] + series2[0]) + (series1[-1] + series2[-1])
+    print(f'Buy-Hold PnL {money_BnH}')
+
+
+##########################################################################
+#################### SCRIPT START ########################################
 if __name__ == '__main__':
     start_date = '2018-03-01'
-    # start_date = '2018-01-01'
     end_date = '2018-08-31'
     tickers = ['BTC-USD', 'ETH-USD', 'EOS-USD', 'LTC-USD', 'XMR-USD',
                'NEO-USD', 'ZEC-USD', 'BNB-USD', 'TRX-USD']
@@ -200,30 +266,31 @@ if __name__ == '__main__':
         panel_data, keys)
     print(f'The best cointegrated pairs is: {pairs}')
 
-    # TRADING STRATEGY: flag TRADE if spread > 2 sigma
-    return_S1 = np.log(panel_data[pairs[0]]/panel_data[pairs[0]].shift(1)
-                       ).replace([np.inf, -np.inf], np.nan).dropna()
-    return_S2 = np.log(panel_data[pairs[1]]/panel_data[pairs[1]].shift(1)
-                       ).replace([np.inf, -np.inf], np.nan).dropna()
-
-    buy_signal, sell_signal = initiate_trading_signal(return_S1, return_S2)
-
-
-    # Graph: buy sell signals
+    # BACKTESTING
+    # TRADING STRATEGY: flag TRADE if spread out of (mean +/- sigma)
     S1 = panel_data[pairs[0]][1:]
     S2 = panel_data[pairs[1]][1:]
-    buyR = 0*S1
-    sellR = 0*S1
-    # When buying the ratio, buy S1 and sell S2
-    buyR[buy_signal != 0] = S1[buy_signal != 0]
-    sellR[buy_signal != 0] = S2[buy_signal != 0]
-    # When selling the ratio, sell S1 and buy S2
-    buyR[sell_signal != 0] = S2[sell_signal != 0]
-    sellR[sell_signal != 0] = S1[sell_signal != 0]
+    return_S1 = get_log_return(panel_data[pairs[0]])
+    return_S2 = get_log_return(panel_data[pairs[1]])
 
-    S1.plot(color='b')
-    S2.plot(color='c')
-    buyR.plot(color='g', linestyle='None', marker='^')
-    sellR.plot(color='r', linestyle='None', marker='^')
-    plt.legend(['Series 1', 'Series 2', 'Buy Signal', 'Sell Signal'])
+    # VERIFY TRADING STRATEGY WITHOUT PREDICTION MODEL ARIMA-GARCH
+    print("Comparision between Buy-n-Hold and Trading Strategy without prediction model ARIMA-GARCH")
+    trading_signal = initiate_trading_signal(return_S1 - return_S2, S1, S2)
+    compare_PnL(S1, S2, trading_signal)
+
+    # VERIFY TRADING STRATEGY WITH PREDICTION MODEL ARIMA-GARCH
+    spread = return_S1 - return_S2
+    forecast_spread = predict_future_trend(spread)
+    plt.plot(spread, color='blue')
+    plt.plot(forecast_spread, color='green')
     plt.show()
+
+    print("Comparision between Buy-n-Hold and Trading Strategy with prediction model ARIMA-GARCH")
+    trading_signal = initiate_trading_signal(forecast_spread, S1, S2)
+    compare_PnL(S1, S2, trading_signal)
+
+    # FOWARD TESTING
+
+
+########################################################################
+#################### SCRIPT END ########################################
