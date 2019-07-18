@@ -143,7 +143,7 @@ def predict_future_trend(data, plot=False):
         plt.show()
 
     forecast['Forecast'] = forecast_output
-    return forecast
+    return forecast['Forecast']
 
 
 def forecast_nextday(timeseries):
@@ -290,6 +290,7 @@ if __name__ == '__main__':
     compare_PnL(S1, S2, trading_signal)
 
     # FOWARD TESTING
+
 
 
 ########################################################################
