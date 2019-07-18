@@ -6,7 +6,6 @@ from statsmodels.stats.diagnostic import acorr_ljungbox
 from statsmodels.tsa.arima_model import ARIMA
 from arch import arch_model
 from statsmodels.stats.stattools import jarque_bera
-from sklearn.model_selection import train_test_split
 from pandas_datareader import data
 import matplotlib.pyplot as plt
 import seaborn
@@ -35,12 +34,9 @@ def find_cointegrated_pairs(data, columns, plot=False):
 
     if plot is True:
         # Illustrate the co-integrated pairs
-        seaborn.heatmap(pvalues, xticklabels=keys,
+        seaborn.heatmap(pvalue_matrix, xticklabels=keys,
                         yticklabels=keys, cmap='RdYlGn_r',
-                        mask=(pvalues >= 0.98))
-        plt.show()
-        plt.plot(panel_data[pairs[0]], color='red')
-        plt.plot(panel_data[pairs[1]], color='green')
+                        mask=(pvalue_matrix >= 0.98))
         plt.show()
 
     return score_matrix, pvalue_matrix, pairs
@@ -165,7 +161,7 @@ def forecast_nextday(timeseries):
         return mdl_arima.forecast()[0]
 
 
-def initiate_trading_signal(spread, series_1, series_2, plot=False):
+def initiate_trading_signal(spread, series_1, series_2, plot=False, series1_label='Series 1', series2_label='Series 2'):
     mean = spread.mean()
     upper_threshold = mean + spread.std()
     lower_threshold = mean - spread.std()
@@ -189,8 +185,8 @@ def initiate_trading_signal(spread, series_1, series_2, plot=False):
         plt.axhline(0, color='black')
         plt.axhline(upper_threshold, color='red', linestyle='--')
         plt.axhline(lower_threshold, color='green', linestyle='--')
-        plt.legend(['Rolling Ratio of Return Spread', 'Mean',
-                    'upper_threshold', 'lower_threshold'])
+        plt.legend(['Difference of Logarithm Return', 'Mean',
+                    'Upper Threshold', 'Lower Threshold'])
         plt.show()
 
     if plot is True:
@@ -210,7 +206,7 @@ def initiate_trading_signal(spread, series_1, series_2, plot=False):
         x1, x2, y1, y2 = plt.axis()
         plt.axis((x1, x2, min(series_1.min(), series_2.min()),
                   max(series_1.max(), series_2.max())))
-        plt.legend(['Series 1', 'Series 2', 'Buy Signal', 'Sell Signal'])
+        plt.legend([series1_label, series2_label, 'Buy Signal', 'Sell Signal'])
         plt.show()
 
     return trading_signal
@@ -221,9 +217,10 @@ def get_log_return(data):
                   ).replace([np.inf, -np.inf], np.nan).dropna()
 
 
-def compare_PnL(series1, series2, trading_signal):
+def compare_PnL(series1, series2, trading_signal, plot=False):
     ratios = series1/series2
     money = 0
+    money_cum = pd.Series(index=ratios.index)
     countseries1 = 0
     countseries2 = 0
     for i in range(len(ratios)):
@@ -242,55 +239,105 @@ def compare_PnL(series1, series2, trading_signal):
             money += series1[i]*countseries1 + series2[i]*countseries2
             countseries1 = 0
             countseries2 = 0
+        money_cum[i] = money
+
     print(f'Strategy PnL {money}')
 
     # Buy and Hold PnL
     money_BnH = -(series1[0] + series2[0]) + (series1[-1] + series2[-1])
     print(f'Buy-Hold PnL {money_BnH}')
 
+    money_BnH_cum = pd.Series(index=ratios.index)
+    initial_investment = -(series1[0] + series2[0])
+    for j in range(len(ratios)):
+        money_BnH_cum[j] = (series1[j] + series2[j]) + initial_investment
+    if plot is True:
+        fit, ax = plt.subplots()
+        ax.plot(money_cum, label='Trading Strategy profit')
+        ax.plot(money_BnH_cum, label='Buy and Hold profit')
+        ax.legend(loc='lower left')
+        plt.show()
+
+    return True
+
 
 ##########################################################################
 #################### SCRIPT START ########################################
 if __name__ == '__main__':
+    # Retrieve train data
     start_date = '2018-03-01'
     end_date = '2018-08-31'
     tickers = ['BTC-USD', 'ETH-USD', 'EOS-USD', 'LTC-USD', 'XMR-USD',
                'NEO-USD', 'ZEC-USD', 'BNB-USD', 'TRX-USD']
-
-    panel_data = data.DataReader(
+    train_data = data.DataReader(
         tickers, 'yahoo', start_date, end_date)['Adj Close']
-    keys = panel_data.keys()
+    keys = train_data.keys()
+
+    # Retrieve test data
+    start_date = '2018-09-03'
+    end_date = '2018-10-31'
+    test_data = data.DataReader(
+        tickers, 'yahoo', start_date, end_date)['Adj Close']
+    keys_test = test_data.keys()
 
     # Find the best co-integrated pairs
     scores, pvalues, pairs = find_cointegrated_pairs(
-        panel_data, keys)
+        train_data, keys, plot=True)
     print(f'The best cointegrated pairs is: {pairs}')
+    # Plot the historical price of conintergrated pair
+    fig, ax = plt.subplots()
+    ax.plot(train_data[pairs[0]], color='b', label=pairs[0])
+    ax.plot(train_data[pairs[1]], color='r', label=pairs[1])
+    ax.legend(loc='upper right')
+    plt.show()
 
     # BACKTESTING
-    # TRADING STRATEGY: flag TRADE if spread out of (mean +/- sigma)
-    S1 = panel_data[pairs[0]][1:]
-    S2 = panel_data[pairs[1]][1:]
-    return_S1 = get_log_return(panel_data[pairs[0]])
-    return_S2 = get_log_return(panel_data[pairs[1]])
+    S1 = train_data[pairs[0]][1:]
+    S2 = train_data[pairs[1]][1:]
+    return_S1 = get_log_return(train_data[pairs[0]])
+    return_S2 = get_log_return(train_data[pairs[1]])
 
     # VERIFY TRADING STRATEGY WITHOUT PREDICTION MODEL ARIMA-GARCH
     print("Comparision between Buy-n-Hold and Trading Strategy without prediction model ARIMA-GARCH")
-    trading_signal = initiate_trading_signal(return_S1 - return_S2, S1, S2)
-    compare_PnL(S1, S2, trading_signal)
+    trading_signal = initiate_trading_signal(
+        return_S1 - return_S2, S1, S2, True, pairs[0], pairs[1])
+    compare_PnL(S1, S2, trading_signal, True)
 
     # VERIFY TRADING STRATEGY WITH PREDICTION MODEL ARIMA-GARCH
     spread = return_S1 - return_S2
     forecast_spread = predict_future_trend(spread)
-    plt.plot(spread, color='blue')
-    plt.plot(forecast_spread, color='green')
+    # Plot forecast_spread vs original spread
+    fig, ax = plt.subplots()
+    ax.plot(spread, color='blue', label='spread')
+    ax.plot(forecast_spread, color='green', label='forecast spread')
+    ax.legend(loc='upper right')
+    # ax.title('Train Data: Spread vs Predicted Spread by ARIMA-GARCH')
     plt.show()
 
     print("Comparision between Buy-n-Hold and Trading Strategy with prediction model ARIMA-GARCH")
-    trading_signal = initiate_trading_signal(forecast_spread, S1, S2)
-    compare_PnL(S1, S2, trading_signal)
+    trading_signal = initiate_trading_signal(
+        forecast_spread, S1, S2, True, pairs[0], pairs[1])
+    compare_PnL(S1, S2, trading_signal, True)
 
     # FOWARD TESTING
+    return_S1 = get_log_return(test_data[pairs[0]])
+    return_S2 = get_log_return(test_data[pairs[1]])
+    S1 = test_data[pairs[0]][1:]
+    S2 = test_data[pairs[1]][1:]
+    spread = return_S1 - return_S2
+    forecast_spread = predict_future_trend(spread)
+    # Plot forecast_spread vs original spread
+    fig, ax = plt.subplots()
+    ax.plot(spread, color='blue', label='spread')
+    ax.plot(forecast_spread, color='green', label='forecast spread')
+    ax.legend(loc='upper right')
+    # plt.title('Test Data: Spread vs Predicted Spread by ARIMA-GARCH')
+    plt.show()
 
+    print("Comparision between Buy-n-Hold and Trading Strategy with prediction model ARIMA-GARCH")
+    trading_signal = initiate_trading_signal(forecast_spread, S1, S2, True, pairs[0], pairs[1])
+    compare_PnL(S1, S2, trading_signal, True)
+    print('Script end')
 
 
 ########################################################################
