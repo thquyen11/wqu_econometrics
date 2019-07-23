@@ -390,6 +390,14 @@ plot_drawdown_periods(pnl_is['pnl'], top=5)
 
 
 #%%
+# Buy-and-Hold Bitcoin PnL
+btc_return = (btc_raw_insample['Adj Close'] - btc_raw_insample['Adj Close'].shift(1)).dropna().cumsum()
+btc_return[-1] = -btc_raw_insample.iloc[0]['Adj Close'] + btc_raw_insample.iloc[-1]['Adj Close']
+plt.plot(btc_return)
+plt.show()
+
+
+#%%
 # OUT OF SAMPLE TESTING
 
 # Construct the out-of-sample spread
